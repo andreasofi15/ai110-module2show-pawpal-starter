@@ -1,0 +1,155 @@
+classDiagram
+    class Priority {
+        <<enumeration>>
+        LOW
+        MEDIUM
+        HIGH
+    }
+    class Category {
+        <<enumeration>>
+        FEEDING
+        WALK
+        MEDICATION
+        GROOMING
+        ENRICHMENT
+        APPOINTMENT
+    }
+    class Frequency {
+        <<enumeration>>
+        ONCE
+        DAILY
+        WEEKLY
+    }
+    class TimePreference {
+        <<enumeration>>
+        MORNING
+        AFTERNOON
+        EVENING
+        ANYTIME
+    }
+
+    class Task {
+        +int id
+        +String description
+        +Category category
+        +Priority priority
+        +datetime due_time
+        +int duration_minutes
+        +Frequency frequency
+        +TimePreference preferred_time
+        +bool must_do
+        +bool is_complete
+        +List~datetime~ completion_history
+        +String pet_name
+        +end_time() datetime
+        +overlaps_with(other) bool
+        +is_overdue(now) bool
+        +mark_complete(when) Task
+        +next_occurrence() Task
+        +last_completed() datetime
+        +to_dict() dict
+    }
+
+    class Pet {
+        +String name
+        +String species
+        +int age
+        +float weight_lbs
+        +String notes
+        +List~Task~ tasks
+        +add_task(task) void
+        +remove_task(task_id) void
+        +get_tasks(pending_only) List~Task~
+        +update_weight(new_weight) void
+        +to_dict() dict
+    }
+
+    class TimeBlock {
+        +String label
+        +List~String~ days
+        +time start
+        +time end
+        +overlaps_with(start, end) bool
+    }
+
+    class SupplyItem {
+        +int id
+        +String name
+        +String pet_name
+        +int restock_every_days
+        +date last_purchased
+        +int remind_days_before
+        +String notes
+        +next_due_date() date
+        +is_due(today) bool
+        +mark_purchased(on_date) void
+    }
+
+    class Owner {
+        +String name
+        +int available_minutes
+        +List~Pet~ pets
+        +List~TimeBlock~ busy_blocks
+        +List~SupplyItem~ supplies
+        +add_pet(pet) void
+        +remove_pet(name) void
+        +get_pet(name) Pet
+        +add_busy_block(block) void
+        +add_supply(item) void
+        +remove_supply(item_id) void
+        +save_to_json(path) void
+        +load_from_json(path) Owner$
+    }
+
+    class Conflict {
+        +Task task_a
+        +Task task_b
+        +TimeBlock busy_block
+        +String message
+    }
+
+    class Scheduler {
+        +Owner owner
+        +get_all_tasks() List~Task~
+        +sort_by_time(tasks) List~Task~
+        +sort_by_priority(tasks) List~Task~
+        +filter_tasks(pet_name, category, status) List~Task~
+        +detect_conflicts() List~Conflict~
+        +get_overdue_tasks(now) List~Task~
+        +complete_task(task_id) void
+        +get_due_reminders(today) List~SupplyItem~
+        +build_daily_plan(day) DailyPlan
+    }
+
+    class DailyPlan {
+        +date day
+        +List~ScheduledItem~ items
+        +List~Task~ skipped
+        +List~Task~ overdue
+        +List~SupplyItem~ reminders
+        +total_minutes() int
+        +summary() String
+    }
+
+    class ScheduledItem {
+        +Task task
+        +String reason
+    }
+
+    Owner "1" o-- "*" Pet : has
+    Owner "1" *-- "*" TimeBlock : busy during
+    Owner "1" *-- "*" SupplyItem : tracks
+    Pet "1" *-- "*" Task : owns
+    Scheduler --> Owner : manages
+    Scheduler ..> DailyPlan : creates
+    Scheduler ..> Conflict : detects
+    DailyPlan "1" *-- "*" ScheduledItem : contains
+    DailyPlan --> SupplyItem : reminders
+    DailyPlan --> Task : skipped and overdue
+    ScheduledItem --> Task : wraps
+    Conflict --> Task : involves
+    Conflict --> TimeBlock : may involve
+    Task --> Priority
+    Task --> Category
+    Task --> Frequency
+    Task --> TimePreference
