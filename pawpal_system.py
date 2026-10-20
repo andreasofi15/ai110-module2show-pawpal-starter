@@ -103,21 +103,30 @@ class Task:
 
     def mark_complete(self, when: Optional[datetime] = None) -> Optional[Task]:
         """Mark done, log the time, and return the next occurrence (None if one-time)."""
+        when = when or datetime.now()
         self.is_complete = True
-        self.completion_history.append(when or datetime.now())
-        return self.next_occurrence()
+        self.completion_history.append(when)
+        return self.next_occurrence(when)
 
-    def next_occurrence(self) -> Optional[Task]:
-        """A fresh copy of this task one day/week later, or None if frequency is ONCE."""
+    def next_occurrence(self, completed_at: Optional[datetime] = None) -> Optional[Task]:
+        """Create the next copy of a recurring task, or None if frequency is ONCE.
+
+        The new due date is the COMPLETION date plus one day (daily) or seven
+        days (weekly), keeping the original time of day. Anchoring to the
+        completion date means a task finished late never produces a next task
+        that is already overdue.
+        """
         if self.frequency == Frequency.DAILY:
             step = timedelta(days=1)
         elif self.frequency == Frequency.WEEKLY:
             step = timedelta(days=7)
         else:
             return None
+        completed_at = completed_at or datetime.now()
+        next_day = completed_at.date() + step
         return replace(
             self,
-            due_time=self.due_time + step,
+            due_time=datetime.combine(next_day, self.due_time.time()),
             is_complete=False,
             completion_history=[],
             id=next(_task_ids),
@@ -351,8 +360,9 @@ class Scheduler:
         pet_name: Optional[str] = None,
         category: Optional[Category] = None,
         status: Optional[str] = None,      # "pending" or "complete"
+        day: Optional[date] = None,        # only tasks due on this date
     ) -> list[Task]:
-        """Filter tasks across ALL pets. Any argument left as None is ignored."""
+        """Filter tasks across ALL pets (earliest first). Arguments left as None are ignored."""
         if status not in (None, "pending", "complete"):
             raise ValueError("status must be 'pending', 'complete', or None")
         results = self.owner.get_all_tasks()
@@ -360,11 +370,13 @@ class Scheduler:
             results = [t for t in results if t.pet_name.lower() == pet_name.lower()]
         if category is not None:
             results = [t for t in results if t.category == category]
+        if day is not None:
+            results = [t for t in results if t.due_time.date() == day]
         if status == "pending":
             results = [t for t in results if not t.is_complete]
         elif status == "complete":
             results = [t for t in results if t.is_complete]
-        return results
+        return self.sort_by_time(results)
 
     # -- conflicts ----------------------------------------------------------
 
@@ -379,12 +391,14 @@ class Scheduler:
 
         for a, b in itertools.combinations(pending, 2):
             if a.overlaps_with(b):
+                relation = ("starts at the same time as" if a.due_time == b.due_time
+                            else "overlaps")
                 conflicts.append(Conflict(
                     task_a=a,
                     task_b=b,
                     message=(
                         f"{a.pet_name}: '{a.description}' ({a.due_time:%b %d %H:%M}-{a.end_time():%H:%M}) "
-                        f"overlaps {b.pet_name}: '{b.description}' "
+                        f"{relation} {b.pet_name}: '{b.description}' "
                         f"({b.due_time:%H:%M}-{b.end_time():%H:%M})"
                     ),
                 ))
@@ -401,6 +415,29 @@ class Scheduler:
                         ),
                     ))
         return conflicts
+
+    def suggest_free_slot(self, task: Task, step_minutes: int = 5) -> Optional[datetime]:
+        """Earliest start at or after task.due_time (same day) with no clash.
+
+        Tries start times in `step_minutes` increments and returns the first one
+        where the task overlaps no other pending task and no owner busy block.
+        Returns None if there is no room left that day.
+        """
+        others = [t for t in self.owner.get_all_tasks()
+                  if not t.is_complete and t.id != task.id]
+        length = timedelta(minutes=task.duration_minutes)
+        step = timedelta(minutes=step_minutes)
+        end_of_day = datetime.combine(task.due_time.date(), time.max)
+
+        start = task.due_time
+        while start + length <= end_of_day:
+            end = start + length
+            task_clash = any(start < o.end_time() and o.due_time < end for o in others)
+            block_clash = any(b.overlaps_with(start, end) for b in self.owner.busy_blocks)
+            if not task_clash and not block_clash:
+                return start
+            start += step
+        return None
 
     # -- overdue / completion / reminders -----------------------------------
 
